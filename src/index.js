@@ -8,6 +8,7 @@ const { parse } = require('fast-csv');
 const { z } = require('zod');
 const { discoverCandidates } = require('./discover');
 const { extractEvidenceFromPage } = require('./extract');
+const { classifyEvidence, OUTPUT_NOTE } = require('./classify');
 
 const { buildConfig } = require('./config');
 
@@ -63,17 +64,6 @@ async function readCsv(input) {
   });
 }
 
-function classify(snippets) {
-  const text = snippets.map(s => s.snippet).join(' ').toLowerCase();
-  if (!text) return 'Unclear / needs legal review';
-  if (/prior written permission|may not reproduce|permission required/.test(text)) return 'Permission required';
-  if (/commercial use|commercial republication|non-commercial/.test(text) && /prohibit|not|without/.test(text)) return 'Commercial republication prohibited';
-  if (/api/.test(text) && /only|terms/.test(text)) return 'API only';
-  if (/creative commons|attribution/.test(text)) return 'Likely allowed with attribution';
-  if (/public domain|open data|license/.test(text)) return 'Allowed';
-  return 'Unclear / needs legal review';
-}
-
 async function processSource(source, config) {
   const info = normalizeUrl(source.url);
   const discovery = await discoverCandidates(info.normalizedUrl, config);
@@ -98,7 +88,7 @@ async function processSource(source, config) {
       fetchedAt: new Date().toISOString()
     }));
   }
-  return { ...info, classification: classify(evidence), evidence, discoveryEvidence: discovery.evidence, row: source.row };
+  return { ...info, classification: classifyEvidence(evidence), evidence, discoveryEvidence: discovery.evidence, row: source.row };
 }
 
 async function mapLimit(items, limit, worker) {
@@ -121,13 +111,13 @@ function csvEscape(value) {
 
 async function writeReports(results, outputDir) {
   await fsp.mkdir(outputDir, { recursive: true });
-  const csvRows = ['original_url,origin,classification,page_url,discovery,keyword,http_status,fetched_at,snippet'];
-  const md = ['# Research Report', ''];
+  const csvRows = ['original_url,origin,classification_research_flag,classification_note,page_url,discovery,keyword,http_status,fetched_at,snippet'];
+  const md = ['# Research Report', '', `> ${OUTPUT_NOTE}`, ''];
   for (const result of results) {
-    md.push(`## ${result.originalUrl}`, '', `- Origin: ${result.origin || ''}`, `- Classification: ${result.classification}`, '');
+    md.push(`## ${result.originalUrl}`, '', `- Origin: ${result.origin || ''}`, `- Classification research flag: ${result.classification}`, '');
     if (!result.evidence.length) md.push('- No keyword evidence found.', '');
     for (const ev of result.evidence) {
-      csvRows.push([result.originalUrl, result.origin, result.classification, ev.pageUrl, ev.discovery || 'content-scan', ev.keyword, ev.httpStatus || '', ev.fetchedAt || '', ev.snippet].map(csvEscape).join(','));
+      csvRows.push([result.originalUrl, result.origin, result.classification, OUTPUT_NOTE, ev.pageUrl, ev.discovery || 'content-scan', ev.keyword, ev.httpStatus || '', ev.fetchedAt || '', ev.snippet].map(csvEscape).join(','));
       md.push(`- **${ev.keyword}** on ${ev.pageUrl} (${ev.discovery || 'content-scan'}, HTTP ${ev.httpStatus || 'n/a'}, fetched ${ev.fetchedAt || 'n/a'}): ${ev.snippet}`);
     }
     md.push('');
