@@ -1,0 +1,27 @@
+{
+  "name": "researchtool",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MikeTye/ResearchTool.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/MikeTye/ResearchTool/issues"
+  },
+  "homepage": "https://github.com/MikeTye/ResearchTool#readme",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "fast-csv": "^5.0.7",
+    "playwright": "^1.61.0",
+    "zod": "^4.4.3"
+  }
+}
