@@ -6,20 +6,9 @@ const fsp = require('fs/promises');
 const path = require('path');
 const { parse } = require('fast-csv');
 const { z } = require('zod');
-const cheerio = require('cheerio');
 const { discoverCandidates } = require('./discover');
+const { extractEvidenceFromPage } = require('./extract');
 
-const DEFAULT_KEYWORDS = [
-  'reuse', 'reproduce', 'republish', 'redistribute', 'commercial use', 'API',
-  'open data', 'public domain', 'license', 'Creative Commons', 'non-commercial',
-  'may not reproduce', 'prior written permission', 'automated access', 'scraping', 'crawler'
-];
-const DEFAULT_PATHS = [
-  '/terms', '/terms-of-use', '/terms-and-conditions', '/conditions', '/legal', '/copyright',
-  '/license', '/licensing', '/privacy', '/privacy-policy', '/data-policy', '/api',
-  '/api/terms', '/api-terms', '/usage', '/usage-terms', '/acceptable-use',
-  '/acceptable-use-policy'
-];
 const { buildConfig } = require('./config');
 
 const URL_COLUMNS = ['url', 'URL', 'website', 'source', 'link', 'LINK'];
@@ -37,12 +26,15 @@ Options:
   --concurrency <n>      Concurrent sites to process (default: 2)
   --timeout-ms <n>       HTTP timeout in milliseconds (default: 15000)
   --user-agent <value>   User-Agent header (default: ResearchTool/1.0 (+https://github.com/MikeTye/ResearchTool))
+  --snippet-context-length <n>  Characters before and after each keyword match (default: 250)
+  --max-snippets-per-page <n>   Maximum snippets to keep from each fetched page (default: 10)
   --help                 Show this help
 
 Environment overrides:
   RESEARCHTOOL_CONFIG, RESEARCHTOOL_INPUT, RESEARCHTOOL_OUTPUT_DIR,
   RESEARCHTOOL_KEYWORDS, RESEARCHTOOL_PATHS, RESEARCHTOOL_CONCURRENCY,
-  RESEARCHTOOL_TIMEOUT_MS, RESEARCHTOOL_USER_AGENT
+  RESEARCHTOOL_TIMEOUT_MS, RESEARCHTOOL_USER_AGENT,
+  RESEARCHTOOL_SNIPPET_CONTEXT_LENGTH, RESEARCHTOOL_MAX_SNIPPETS_PER_PAGE
 `);
 }
 
@@ -71,31 +63,6 @@ async function readCsv(input) {
   });
 }
 
-async function fetchText(url, config) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-  try {
-    const res = await fetch(url, { headers: { 'user-agent': config.userAgent }, signal: controller.signal, redirect: 'follow' });
-    const type = res.headers.get('content-type') || '';
-    if (!res.ok || (!type.includes('text') && !type.includes('html') && !type.includes('xml'))) return { ok: false, status: res.status, text: '' };
-    return { ok: true, status: res.status, text: await res.text() };
-  } catch (err) {
-    return { ok: false, status: 0, text: '', error: err.message };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function snippetsFor(text, keywords) {
-  const compact = text.replace(/\s+/g, ' ');
-  const snippets = [];
-  for (const keyword of keywords) {
-    const idx = compact.toLowerCase().indexOf(keyword.toLowerCase());
-    if (idx !== -1) snippets.push({ keyword, snippet: compact.slice(Math.max(0, idx - 120), idx + keyword.length + 220).trim() });
-  }
-  return snippets.slice(0, 10);
-}
-
 function classify(snippets) {
   const text = snippets.map(s => s.snippet).join(' ').toLowerCase();
   if (!text) return 'Unclear / needs legal review';
@@ -114,23 +81,21 @@ async function processSource(source, config) {
   const seen = new Set();
   const evidence = [];
   for (const url of candidateUrls.filter(url => url && !seen.has(url) && seen.add(url)).slice(0, 30)) {
-    const page = await fetchText(url, config);
-    if (!page.ok) continue;
-    const $ = cheerio.load(page.text);
-    const text = $('body').text() || page.text;
-    snippetsFor(text, config.keywords).forEach(s => evidence.push({
-      pageUrl: url,
-      discovery: discovery.evidence.filter(item => item.url === url).map(item => item.method).join(';') || 'source-url',
-      ...s
-    }));
+    const discoveryMethod = discovery.evidence.filter(item => item.url === url).map(item => item.method).join(';') || 'source-url';
+    const extracted = await extractEvidenceFromPage(info.originalUrl, url, discoveryMethod, config);
+    extracted.evidence.forEach(item => evidence.push(item));
     if (evidence.length >= 10) break;
   }
   if (!evidence.length) {
     discovery.evidence.slice(0, 10).forEach(item => evidence.push({
+      originalSourceUrl: info.originalUrl,
       pageUrl: item.url,
+      fetchedLegalPageUrl: item.url,
       discovery: item.method,
       keyword: item.blocked ? 'blocked' : 'inaccessible',
-      snippet: item.error || `HTTP status ${item.status || 'not fetched'}`
+      snippet: item.error || `HTTP status ${item.status || 'not fetched'}`,
+      httpStatus: item.status || 0,
+      fetchedAt: new Date().toISOString()
     }));
   }
   return { ...info, classification: classify(evidence), evidence, discoveryEvidence: discovery.evidence, row: source.row };
@@ -156,14 +121,14 @@ function csvEscape(value) {
 
 async function writeReports(results, outputDir) {
   await fsp.mkdir(outputDir, { recursive: true });
-  const csvRows = ['original_url,origin,classification,page_url,discovery,keyword,snippet'];
+  const csvRows = ['original_url,origin,classification,page_url,discovery,keyword,http_status,fetched_at,snippet'];
   const md = ['# Research Report', ''];
   for (const result of results) {
     md.push(`## ${result.originalUrl}`, '', `- Origin: ${result.origin || ''}`, `- Classification: ${result.classification}`, '');
     if (!result.evidence.length) md.push('- No keyword evidence found.', '');
     for (const ev of result.evidence) {
-      csvRows.push([result.originalUrl, result.origin, result.classification, ev.pageUrl, ev.discovery || 'content-scan', ev.keyword, ev.snippet].map(csvEscape).join(','));
-      md.push(`- **${ev.keyword}** on ${ev.pageUrl} (${ev.discovery || 'content-scan'}): ${ev.snippet}`);
+      csvRows.push([result.originalUrl, result.origin, result.classification, ev.pageUrl, ev.discovery || 'content-scan', ev.keyword, ev.httpStatus || '', ev.fetchedAt || '', ev.snippet].map(csvEscape).join(','));
+      md.push(`- **${ev.keyword}** on ${ev.pageUrl} (${ev.discovery || 'content-scan'}, HTTP ${ev.httpStatus || 'n/a'}, fetched ${ev.fetchedAt || 'n/a'}): ${ev.snippet}`);
     }
     md.push('');
   }
@@ -187,4 +152,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildConfig, normalizeUrl, readCsv, processSource, fetchText };
+module.exports = { buildConfig, normalizeUrl, readCsv, processSource };

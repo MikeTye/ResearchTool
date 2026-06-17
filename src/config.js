@@ -23,7 +23,9 @@ const ConfigSchema = z.object({
   paths: z.array(z.string().min(1)).min(1),
   concurrency: z.coerce.number().int().min(1).max(10),
   timeoutMs: z.coerce.number().int().min(1000),
-  userAgent: z.string().min(1)
+  userAgent: z.string().min(1),
+  snippetContextLength: z.coerce.number().int().min(0).max(2000),
+  maxSnippetsPerPage: z.coerce.number().int().min(1).max(50)
 });
 
 function defaultInputPath() {
@@ -37,7 +39,9 @@ const DEFAULT_CONFIG = Object.freeze({
   paths: DEFAULT_PATHS,
   concurrency: 2,
   timeoutMs: 15000,
-  userAgent: 'ResearchTool/1.0 (+https://github.com/MikeTye/ResearchTool)'
+  userAgent: 'ResearchTool/1.0 (+https://github.com/MikeTye/ResearchTool)',
+  snippetContextLength: 250,
+  maxSnippetsPerPage: 10
 });
 
 function parseArgs(argv) {
@@ -81,7 +85,9 @@ function envOverrides(env = process.env) {
     paths: env.RESEARCHTOOL_PATHS,
     concurrency: env.RESEARCHTOOL_CONCURRENCY,
     timeoutMs: env.RESEARCHTOOL_TIMEOUT_MS,
-    userAgent: env.RESEARCHTOOL_USER_AGENT
+    userAgent: env.RESEARCHTOOL_USER_AGENT,
+    snippetContextLength: env.RESEARCHTOOL_SNIPPET_CONTEXT_LENGTH,
+    maxSnippetsPerPage: env.RESEARCHTOOL_MAX_SNIPPETS_PER_PAGE
   };
 }
 
