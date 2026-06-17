@@ -20,65 +20,30 @@ const DEFAULT_PATHS = [
   '/api/terms', '/api-terms', '/usage', '/usage-terms', '/acceptable-use',
   '/acceptable-use-policy'
 ];
+const { buildConfig } = require('./config');
+
 const URL_COLUMNS = ['url', 'URL', 'website', 'source', 'link', 'LINK'];
 
-const ConfigSchema = z.object({
-  input: z.string().min(1),
-  outputDir: z.string().min(1),
-  keywords: z.array(z.string().min(1)).min(1),
-  paths: z.array(z.string().min(1)).min(1),
-  concurrency: z.coerce.number().int().min(1).max(10),
-  timeoutMs: z.coerce.number().int().min(1000),
-  userAgent: z.string().min(1)
-});
 
 function printHelp() {
-  console.log(`Usage: npm run research -- [options]\n\nOptions:\n  --input <path>         Source CSV path (default: input/source.csv, or /input/source.csv if present)\n  --output-dir <path>    Directory for CSV and Markdown reports (default: reports)\n  --keywords <value>     JSON file path or comma-separated keyword override\n  --paths <value>        JSON file path or comma-separated legal-path override\n  --concurrency <n>      Concurrent sites to process (default: 2)\n  --timeout-ms <n>       HTTP timeout in milliseconds (default: 15000)\n  --user-agent <value>   User-Agent header (default: ResearchTool/1.0 (+https://github.com/MikeTye/ResearchTool))\n  --help                 Show this help\n`);
-}
+  console.log(`Usage: npm run research -- [options]
 
-function parseArgs(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === '--help' || arg === '-h') out.help = true;
-    else if (arg.startsWith('--')) {
-      const key = arg.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-      const next = argv[i + 1];
-      if (!next || next.startsWith('--')) throw new Error(`Missing value for ${arg}`);
-      out[key] = next;
-      i += 1;
-    }
-  }
-  return out;
-}
+Options:
+  --input <path>         Source CSV path (default: input/source.csv, or /input/source.csv if present)
+  --output-dir <path>    Directory for CSV and Markdown reports (default: reports)
+  --config <path>        JSON config file with option overrides
+  --keywords <value>     JSON file path or comma-separated keyword override
+  --paths <value>        JSON file path or comma-separated legal-path override
+  --concurrency <n>      Concurrent sites to process (default: 2)
+  --timeout-ms <n>       HTTP timeout in milliseconds (default: 15000)
+  --user-agent <value>   User-Agent header (default: ResearchTool/1.0 (+https://github.com/MikeTye/ResearchTool))
+  --help                 Show this help
 
-function defaultInputPath() {
-  return fs.existsSync('/input/source.csv') ? '/input/source.csv' : path.join(process.cwd(), 'input/source.csv');
-}
-
-async function listFromOption(value, fallback) {
-  if (!value) return fallback;
-  const maybePath = path.resolve(value);
-  if (fs.existsSync(maybePath)) {
-    const parsed = JSON.parse(await fsp.readFile(maybePath, 'utf8'));
-    if (!Array.isArray(parsed)) throw new Error(`${value} must contain a JSON array`);
-    return parsed.map(String).map(s => s.trim()).filter(Boolean);
-  }
-  return value.split(',').map(s => s.trim()).filter(Boolean);
-}
-
-async function buildConfig(argv) {
-  const args = parseArgs(argv);
-  if (args.help) return { help: true };
-  return ConfigSchema.parse({
-    input: args.input || defaultInputPath(),
-    outputDir: args.outputDir || 'reports',
-    keywords: await listFromOption(args.keywords, DEFAULT_KEYWORDS),
-    paths: await listFromOption(args.paths, DEFAULT_PATHS),
-    concurrency: args.concurrency || 2,
-    timeoutMs: args.timeoutMs || 15000,
-    userAgent: args.userAgent || 'ResearchTool/1.0 (+https://github.com/MikeTye/ResearchTool)'
-  });
+Environment overrides:
+  RESEARCHTOOL_CONFIG, RESEARCHTOOL_INPUT, RESEARCHTOOL_OUTPUT_DIR,
+  RESEARCHTOOL_KEYWORDS, RESEARCHTOOL_PATHS, RESEARCHTOOL_CONCURRENCY,
+  RESEARCHTOOL_TIMEOUT_MS, RESEARCHTOOL_USER_AGENT
+`);
 }
 
 function normalizeUrl(raw) {
