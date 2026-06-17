@@ -2,13 +2,13 @@
 'use strict';
 
 const fs = require('fs');
-const fsp = require('fs/promises');
 const path = require('path');
 const { parse } = require('fast-csv');
 const { z } = require('zod');
 const { discoverCandidates } = require('./discover');
 const { extractEvidenceFromPage } = require('./extract');
-const { classifyEvidence, OUTPUT_NOTE } = require('./classify');
+const { classifyEvidence } = require('./classify');
+const { writeReports } = require('./report');
 
 const { buildConfig } = require('./config');
 
@@ -88,7 +88,14 @@ async function processSource(source, config) {
       fetchedAt: new Date().toISOString()
     }));
   }
-  return { ...info, classification: classifyEvidence(evidence), evidence, discoveryEvidence: discovery.evidence, row: source.row };
+  return {
+    ...info,
+    classification: classifyEvidence(evidence),
+    evidence,
+    discoveredTermsUrls: discovery.candidates.map(item => item.url),
+    discoveryEvidence: discovery.evidence,
+    row: source.row
+  };
 }
 
 async function mapLimit(items, limit, worker) {
@@ -105,34 +112,13 @@ async function mapLimit(items, limit, worker) {
   return results;
 }
 
-function csvEscape(value) {
-  return `"${String(value ?? '').replace(/"/g, '""')}"`;
-}
-
-async function writeReports(results, outputDir) {
-  await fsp.mkdir(outputDir, { recursive: true });
-  const csvRows = ['original_url,origin,classification_research_flag,classification_note,page_url,discovery,keyword,http_status,fetched_at,snippet'];
-  const md = ['# Research Report', '', `> ${OUTPUT_NOTE}`, ''];
-  for (const result of results) {
-    md.push(`## ${result.originalUrl}`, '', `- Origin: ${result.origin || ''}`, `- Classification research flag: ${result.classification}`, '');
-    if (!result.evidence.length) md.push('- No keyword evidence found.', '');
-    for (const ev of result.evidence) {
-      csvRows.push([result.originalUrl, result.origin, result.classification, OUTPUT_NOTE, ev.pageUrl, ev.discovery || 'content-scan', ev.keyword, ev.httpStatus || '', ev.fetchedAt || '', ev.snippet].map(csvEscape).join(','));
-      md.push(`- **${ev.keyword}** on ${ev.pageUrl} (${ev.discovery || 'content-scan'}, HTTP ${ev.httpStatus || 'n/a'}, fetched ${ev.fetchedAt || 'n/a'}): ${ev.snippet}`);
-    }
-    md.push('');
-  }
-  await fsp.writeFile(path.join(outputDir, 'research-report.csv'), `${csvRows.join('\n')}\n`);
-  await fsp.writeFile(path.join(outputDir, 'research-report.md'), `${md.join('\n')}\n`);
-}
-
 async function main() {
   const config = await buildConfig(process.argv.slice(2));
   if (config.help) return printHelp();
   const sources = await readCsv(config.input);
   const results = await mapLimit(sources, config.concurrency, source => processSource(source, config));
   await writeReports(results, config.outputDir);
-  console.log(`Processed ${results.length} source(s). Reports written to ${config.outputDir}`);
+  console.log(`Processed ${results.length} source(s). Reports written to ${path.join(config.outputDir, 'report.csv')} and ${path.join(config.outputDir, 'report.md')}`);
 }
 
 if (require.main === module) {
