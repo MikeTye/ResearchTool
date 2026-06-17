@@ -1,0 +1,43 @@
+{
+  "input": "input/source.csv",
+  "outputDir": "reports",
+  "keywords": [
+    "reuse",
+    "reproduce",
+    "republish",
+    "redistribute",
+    "commercial use",
+    "API",
+    "open data",
+    "public domain",
+    "license",
+    "Creative Commons",
+    "non-commercial",
+    "may not reproduce",
+    "prior written permission",
+    "automated access",
+    "scraping",
+    "crawler",
+    "bulk download",
+    "text and data mining"
+  ],
+  "paths": [
+    "/terms",
+    "/terms-of-use",
+    "/terms-and-conditions",
+    "/legal",
+    "/copyright",
+    "/privacy",
+    "/data-policy",
+    "/api-terms",
+    "/usage-terms",
+    "/acceptable-use",
+    "/robots.txt",
+    "/sitemap.xml"
+  ],
+  "concurrency": 2,
+  "timeoutMs": 15000,
+  "userAgent": "ResearchTool/1.0 (+https://github.com/MikeTye/ResearchTool)",
+  "snippetContextLength": 250,
+  "maxSnippetsPerPage": 10
+}
