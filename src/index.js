@@ -7,6 +7,19 @@ const path = require('path');
 const { parse } = require('fast-csv');
 const { z } = require('zod');
 const cheerio = require('cheerio');
+const { discoverCandidates } = require('./discover');
+
+const DEFAULT_KEYWORDS = [
+  'reuse', 'reproduce', 'republish', 'redistribute', 'commercial use', 'API',
+  'open data', 'public domain', 'license', 'Creative Commons', 'non-commercial',
+  'may not reproduce', 'prior written permission', 'automated access', 'scraping', 'crawler'
+];
+const DEFAULT_PATHS = [
+  '/terms', '/terms-of-use', '/terms-and-conditions', '/conditions', '/legal', '/copyright',
+  '/license', '/licensing', '/privacy', '/privacy-policy', '/data-policy', '/api',
+  '/api/terms', '/api-terms', '/usage', '/usage-terms', '/acceptable-use',
+  '/acceptable-use-policy'
+];
 const { buildConfig } = require('./config');
 
 const URL_COLUMNS = ['url', 'URL', 'website', 'source', 'link', 'LINK'];
@@ -73,26 +86,6 @@ async function fetchText(url, config) {
   }
 }
 
-function discoverLinks(html, baseUrl, origin, sourcePathname) {
-  const $ = cheerio.load(html || '');
-  const found = new Set();
-  $('a[href]').each((_, el) => {
-    const label = `${$(el).text()} ${$(el).attr('href')}`.toLowerCase();
-    if (/terms|legal|copyright|privacy|data|api|usage|license/.test(label)) {
-      try { found.add(new URL($(el).attr('href'), baseUrl).href); } catch (_) {}
-    }
-  });
-  if (sourcePathname && sourcePathname !== '/') {
-    const parts = sourcePathname.split('/').filter(Boolean);
-    while (parts.length) {
-      found.add(`${origin}/${parts.join('/')}/terms`);
-      found.add(`${origin}/${parts.join('/')}/legal`);
-      parts.pop();
-    }
-  }
-  return [...found];
-}
-
 function snippetsFor(text, keywords) {
   const compact = text.replace(/\s+/g, ' ');
   const snippets = [];
@@ -116,20 +109,31 @@ function classify(snippets) {
 
 async function processSource(source, config) {
   const info = normalizeUrl(source.url);
-  const candidates = new Set([info.normalizedUrl, info.origin, `${info.origin}/robots.txt`, `${info.origin}/sitemap.xml`]);
-  config.paths.forEach(p => candidates.add(new URL(p.startsWith('/') ? p : `/${p}`, info.origin).href));
-  const home = await fetchText(info.normalizedUrl, config);
-  if (home.ok) discoverLinks(home.text, info.normalizedUrl, info.origin, info.pathname).forEach(u => candidates.add(u));
+  const discovery = await discoverCandidates(info.normalizedUrl, config);
+  const candidateUrls = [info.normalizedUrl, discovery.homepageUrl, ...discovery.candidates.map(item => item.url)];
+  const seen = new Set();
   const evidence = [];
-  for (const url of [...candidates].slice(0, 30)) {
-    const page = url === info.normalizedUrl && home.ok ? home : await fetchText(url, config);
+  for (const url of candidateUrls.filter(url => url && !seen.has(url) && seen.add(url)).slice(0, 30)) {
+    const page = await fetchText(url, config);
     if (!page.ok) continue;
     const $ = cheerio.load(page.text);
     const text = $('body').text() || page.text;
-    snippetsFor(text, config.keywords).forEach(s => evidence.push({ pageUrl: url, ...s }));
+    snippetsFor(text, config.keywords).forEach(s => evidence.push({
+      pageUrl: url,
+      discovery: discovery.evidence.filter(item => item.url === url).map(item => item.method).join(';') || 'source-url',
+      ...s
+    }));
     if (evidence.length >= 10) break;
   }
-  return { ...info, classification: classify(evidence), evidence, row: source.row };
+  if (!evidence.length) {
+    discovery.evidence.slice(0, 10).forEach(item => evidence.push({
+      pageUrl: item.url,
+      discovery: item.method,
+      keyword: item.blocked ? 'blocked' : 'inaccessible',
+      snippet: item.error || `HTTP status ${item.status || 'not fetched'}`
+    }));
+  }
+  return { ...info, classification: classify(evidence), evidence, discoveryEvidence: discovery.evidence, row: source.row };
 }
 
 async function mapLimit(items, limit, worker) {
@@ -152,14 +156,14 @@ function csvEscape(value) {
 
 async function writeReports(results, outputDir) {
   await fsp.mkdir(outputDir, { recursive: true });
-  const csvRows = ['original_url,origin,classification,page_url,keyword,snippet'];
+  const csvRows = ['original_url,origin,classification,page_url,discovery,keyword,snippet'];
   const md = ['# Research Report', ''];
   for (const result of results) {
     md.push(`## ${result.originalUrl}`, '', `- Origin: ${result.origin || ''}`, `- Classification: ${result.classification}`, '');
     if (!result.evidence.length) md.push('- No keyword evidence found.', '');
     for (const ev of result.evidence) {
-      csvRows.push([result.originalUrl, result.origin, result.classification, ev.pageUrl, ev.keyword, ev.snippet].map(csvEscape).join(','));
-      md.push(`- **${ev.keyword}** on ${ev.pageUrl}: ${ev.snippet}`);
+      csvRows.push([result.originalUrl, result.origin, result.classification, ev.pageUrl, ev.discovery || 'content-scan', ev.keyword, ev.snippet].map(csvEscape).join(','));
+      md.push(`- **${ev.keyword}** on ${ev.pageUrl} (${ev.discovery || 'content-scan'}): ${ev.snippet}`);
     }
     md.push('');
   }
@@ -183,4 +187,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildConfig, normalizeUrl, readCsv, processSource };
+module.exports = { buildConfig, normalizeUrl, readCsv, processSource, fetchText };
